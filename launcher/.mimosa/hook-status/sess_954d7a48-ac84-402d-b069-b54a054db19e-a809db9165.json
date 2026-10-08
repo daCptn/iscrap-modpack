@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-10-08T21:43:53.369Z",
+  "sessionId": "sess_954d7a48-ac84-402d-b069-b54a054db19e",
+  "event": "PostToolUse",
+  "toolName": "Write",
+  "file": "C:\\Users\\roman\\.zcode\\workspace\\default\\gta4_modding\\repo\\README.md",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 5,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

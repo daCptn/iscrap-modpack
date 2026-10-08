@@ -1,0 +1,18 @@
+# Schutzliste — der Launcher löscht/überschreibt diese Dateien NIE bei Deinstallation.
+# Spieler-Fortschritt und Konfiguration.
+Businesses.ini
+scripts/Businesses.ini
+HideoutCashStorageByScottyus1_Spot1.ini
+HideoutCashStorageByScottyus1_Spot2.ini
+HideoutCashStorageByScottyus1_Spot3.ini
+HideoutCashStorageByScottyus1_Spot4.ini
+HideoutCashStorageByScottyus1_Spot5.ini
+JewelleryAndPawnShopsByScottyus1_Save.ini
+Scottyus1GaragesSave.ini
+Scottyus1_JewelleryHideoutStorage.ini
+Scottyus1HideoutController.ini
+Scottyus1JewelleryController.ini
+Scottyus1_Garages_Controller.ini
+scripts/PhonePlus.ini
+scripts/PhonePlusMarkers.ini
+scripts/PhonePlusSave.ini

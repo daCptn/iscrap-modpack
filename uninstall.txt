@@ -1,0 +1,35 @@
+# Mod-Pack Uninstall-Liste (relativ zum Spiel-Root).
+# Diese Dateien/Ordner entfernt der Launcher bei "Saubere Installation".
+# NIEMALS dabei: Saves und Spieler-Konfiguration (siehe keep.txt).
+dinput8.dll
+ScriptHook.dll
+ScriptHookDotNet.asi
+ScriptHookDotNet.log
+aCompleteEditionHook.asi
+IVLodLights.asi
+IVLodLights.dat
+IVLodLights.ini
+MTLX.dll
+scripthook.log
+LibertyLoadout.log
+plugins/GTAIV.EFLC.FusionFix.asi
+plugins/GTAIV.EFLC.FusionFix.cfg
+plugins/GTAIV.EFLC.FusionFix.ini
+plugins/LibertyLoadout.asi
+plugins/LibertyLoadout.ini
+plugins/LibertyLoadout/
+update/GTAIV.EFLC.FusionFix/
+scripts/Businesses.net.dll
+scripts/Businesses.net.dll.bak
+scripts/HideoutCashStorageByScottyus1.net.dll
+scripts/HideoutCashStorageByScottyus1.net.dll.bak
+scripts/HideoutCashStorage_Controller_Addon.net.dll
+scripts/Jewellery_And_Pawn_Shops_By_Scottyus1.net.dll
+scripts/Jewellery_And_Pawn_Shops_By_Scottyus1.net.dll.bak
+scripts/Jewellery_Controller_Addon.net.dll
+scripts/LibertyCityDealershipADDONSByScottyus1.net.dll
+scripts/LibertyCityDealershipByScottyus1.net.dll
+scripts/PhonePlus.net.dll
+scripts/Scottyus1_Garages_Controller_Addon.net.dll
+scripts/PhonePlusIcons/
+scripts/pack_version.txt
