@@ -142,7 +142,7 @@ namespace IScrapLauncher
         internal class Config
         {
             public string GamePath = "";
-            public string RepoUrl = "https://github.com/DEIN-NAME/iscrap-modpack.git";
+            public string RepoUrl = "https://github.com/daCptn/iscrap-modpack.git";
             public string Branch = "main";
 
             public void Load(string path)

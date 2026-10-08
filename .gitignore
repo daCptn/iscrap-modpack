@@ -1,0 +1,7 @@
+.mimosa/
+*.log
+launcher/launcher.ini
+packrepo/
+_cmd/
+fusionfix.zip
+ff_extract/
