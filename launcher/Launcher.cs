@@ -102,20 +102,21 @@ namespace IScrapLauncher
         private static extern bool ShellExecuteEx(ref ShellExecuteInfo info);
 
         private const uint SeeMaskNocloseprocess = 0x00000040;
-        private const uint SeeMaskNoconsole = 0x00000800;
         private const int SwHide = 0;
 
-        /// <summary>Startet eine Datei versteckt und wartet; Rueckgabe = Exit-Code (bei Prozess).</summary>
-        private static int RunWait(string file, string workDir)
+        /// <summary>Fuehrt eine Batch-Datei aus _cmd hidden aus und wartet; Rueckgabe = Exit-Code.
+        /// lpFile ist IMMER cmd.exe (normale EXE); batchArgs sind feste Literale wie "/c git_init.cmd".</summary>
+        private static int RunCmdBatch(string batchArgs)
         {
             ShellExecuteInfo info = new ShellExecuteInfo();
             info.cbSize = Marshal.SizeOf(typeof(ShellExecuteInfo));
-            info.fMask = SeeMaskNocloseprocess | SeeMaskNoconsole;
+            info.fMask = SeeMaskNocloseprocess;
             info.lpVerb = "open";
-            info.lpFile = file;
-            info.lpDirectory = workDir;
+            info.lpFile = "cmd.exe";
+            info.lpParameters = batchArgs;
+            info.lpDirectory = CmdDir();
             info.nShow = SwHide;
-            if (!ShellExecuteEx(ref info)) throw new IOException("Start fehlgeschlagen: " + file);
+            if (!ShellExecuteEx(ref info)) throw new IOException("Start fehlgeschlagen (Win32 " + Marshal.GetLastWin32Error() + "): cmd.exe " + batchArgs);
             if (info.hProcess == IntPtr.Zero) return 0;
             return WaitForHandle(info.hProcess, 600000);
         }
@@ -294,7 +295,7 @@ namespace IScrapLauncher
                 if (Directory.Exists(dir)) { try { Directory.Delete(dir, true); } catch { } }
                 Directory.CreateDirectory(dir);
                 Form.Log("Initialisiere Paket-Repo: " + Cfg.RepoUrl);
-                if (RunWait(WriteCmd("git_init.cmd", CmdInit), CmdDir()) != 0) return false;
+                WriteCmd("git_init.cmd", CmdInit); if (RunCmdBatch("/c git_init.cmd") != 0) return false;
                 WriteGitConfig(dir);
             }
             else
@@ -302,8 +303,8 @@ namespace IScrapLauncher
                 WriteGitConfig(dir);
                 Form.Log("Aktualisiere Paket-Repo ...");
             }
-            if (RunWait(WriteCmd("git_fetch.cmd", CmdFetch), CmdDir()) != 0) { Form.Log("git fetch fehlgeschlagen"); return false; }
-            if (RunWait(WriteCmd("git_reset.cmd", CmdReset), CmdDir()) != 0) { Form.Log("git reset fehlgeschlagen"); return false; }
+            WriteCmd("git_fetch.cmd", CmdFetch); if (RunCmdBatch("/c git_fetch.cmd") != 0) { Form.Log("git fetch fehlgeschlagen"); return false; }
+            WriteCmd("git_reset.cmd", CmdReset); if (RunCmdBatch("/c git_reset.cmd") != 0) { Form.Log("git reset fehlgeschlagen"); return false; }
             return true;
         }
 
