@@ -396,27 +396,11 @@ namespace IScrapLauncher
         }
 
         // ------------------------------------------------------------ Ruckler-Fix (Registry)
-        // Nexus 1513 ("High Priority Registry Tweak") als Standard-IFEO-Werte selbst
-        // gesetzt: CPU-Prioritaet Hoch (3), E/A-Prioritaet Hoch (3), Speicherseiten-
-        // Prioritaet Sehr Hoch (5) fuer GTAIV.exe. Beide Registry-Views (WOW64 + nativ).
-        // Die Kommandozeilen sind durchgehend Literale — keine Variablen, kein Injection-
-        // Risiko. UAC-Abfrage erscheint einmal pro Aktion (HKLM braucht Admin).
-        private const string TweakApplyCmd =
-            "/c reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /t REG_DWORD /d 3 /f && " +
-            "reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /t REG_DWORD /d 3 /f && " +
-            "reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /t REG_DWORD /d 5 /f && " +
-            "reg add \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /t REG_DWORD /d 3 /f && " +
-            "reg add \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /t REG_DWORD /d 3 /f && " +
-            "reg add \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /t REG_DWORD /d 5 /f";
-
-        private const string TweakRemoveCmd =
-            "/c reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /f && " +
-            "reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /f && " +
-            "reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /f && " +
-            "reg delete \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /f && " +
-            "reg delete \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /f && " +
-            "reg delete \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /f";
-
+        // Nexus 1513 ("High Priority Registry Tweak") als Standard-IFEO-Werte: CPU-
+        // Prioritaet Hoch (3), E/A-Prioritaet Hoch (3), Speicherseiten-Prioritaet Sehr
+        // Hoch (5) fuer GTAIV.exe, nativ + WOW6432Node. Die Elevation macht ein eigener
+        // Helper (RucklerFix.exe, requireAdministrator-Manifest) — runas auf cmd.exe
+        // lieferte in der Praxis Win32 5 (Access Denied).
         internal static bool TweakActive()
         {
             try
@@ -430,45 +414,52 @@ namespace IScrapLauncher
             catch { return false; }
         }
 
-        private static void RunElevated(string literalArgs)
-        {
-            ShellExecuteInfo info = new ShellExecuteInfo();
-            info.cbSize = Marshal.SizeOf(typeof(ShellExecuteInfo));
-            info.fMask = SeeMaskNocloseprocess;
-            info.lpVerb = "runas";          // UAC — reg auf HKLM braucht Admin
-            info.lpFile = "cmd.exe";
-            info.lpParameters = literalArgs;
-            info.nShow = SwHide;
-            if (!ShellExecuteEx(ref info))
-                throw new IOException("Start fehlgeschlagen (Win32 " + Marshal.GetLastWin32Error() + ")");
-            if (info.hProcess != IntPtr.Zero) CloseHandle(info.hProcess);
-        }
-
         internal static void ToggleTweak()
         {
+            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RucklerFix.exe");
+            if (!File.Exists(helper))
+            {
+                Form.Log("RucklerFix.exe fehlt neben dem Launcher — bitte beide EXEs aus dem Repo (launcher/) verwenden.");
+                return;
+            }
+            bool wasActive = TweakActive();
+            Form.Log((wasActive ? "Entferne" : "Setze") + " Ruckler-Fix (CPU/E/A/Speicher-Prioritaet fuer GTAIV.exe) ... [UAC-Prompt]");
             try
             {
-                if (TweakActive())
+                ShellExecuteInfo info = new ShellExecuteInfo();
+                info.cbSize = Marshal.SizeOf(typeof(ShellExecuteInfo));
+                info.fMask = SeeMaskNocloseprocess;
+                info.lpVerb = "open";   // Elevation kommt aus dem Helper-Manifest
+                info.lpFile = helper;
+                info.lpParameters = wasActive ? "remove" : "apply";
+                info.nShow = 1;
+                if (!ShellExecuteEx(ref info))
                 {
-                    Form.Log("Entferne Ruckler-Fix (Registry-Werte) ... [UAC-Prompt]");
-                    RunElevated(TweakRemoveCmd);
-                    Form.Log("Ruckler-Fix ist jetzt " + (TweakActive() ? "NOCH AKTIV (loeschen fehlgeschlagen?)" : "aus (Vanilla-Prioritaet)."));
+                    int err = Marshal.GetLastWin32Error();
+                    Form.Log(err == 1223
+                        ? "UAC-Prompt abgebrochen — nichts geaendert."
+                        : "Ruckler-Fix fehlgeschlagen (Win32 " + err + ").");
+                    return;
                 }
-                else
+                if (info.hProcess != IntPtr.Zero)
                 {
-                    Form.Log("Setze Ruckler-Fix (CPU/E/A/Speicher-Prioritaet Hoch fuer GTAIV.exe) ... [UAC-Prompt]");
-                    RunElevated(TweakApplyCmd);
-                    Form.Log("Ruckler-Fix ist jetzt " + (TweakActive() ? "AN — wirkt ab naechstem Spielstart, rueckganguetschbar ueber denselben Button." : "NICHT AKTIV (reg fehlgeschlagen?)"));
+                    WaitForHandle(info.hProcess, 60000);   // wartet auch, bis der Nutzer den UAC-Prompt bedient
                 }
+                Form.Log("Ruckler-Fix ist jetzt " + (TweakActive()
+                    ? "AN — wirkt ab dem naechsten Spielstart, rueckgaengig ueber denselben Button."
+                    : "aus (Vanilla-Prioritaet)."));
             }
             catch (Exception ex) { Form.Log("Ruckler-Fix fehlgeschlagen: " + ex.Message); }
         }
 
         // ------------------------------------------------------------ Extra-Pakete (packages/)
         // Mods, deren Lizenz Re-Uploads verbietet (LC Customs, First Degree 154), kommen
-        // NICHT ins Git-Repo: Der Nutzer laedt die Nexus-Zips einmalig in den packages/-
-        // Ordner neben dem Launcher, der Launcher entpackt sie spielrelativ und sichert
-        // ueberschriebene Originaldateien nach packages_backup/<Paketname>/.
+        // NICHT ins Git-Repo: Der Nutzer legt die Nexus-Archive (.zip/.7z/.rar) in den
+        // packages/-Ordner neben dem Launcher. Zip entpackt .NET selbst; 7z/rar gehen
+        // ueber das Windows-eigene tar.exe (libarchive) oder ein installiertes 7-Zip —
+        // jeweils als generierte Batch-Datei (Pfade stehen im Dateiinhalt, nie in
+        // Kommandozeilen-Argumenten). Ueberschriebene Originaldateien landen in
+        // packages_backup/<Paketname>/.
         internal static void InstallPackages(string game)
         {
             string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packages");
@@ -476,54 +467,91 @@ namespace IScrapLauncher
             {
                 try { Directory.CreateDirectory(dir); } catch { }
                 Form.Log("packages/-Ordner angelegt: " + dir);
-                Form.Log("Zips der Extra-Mods (LC Customs, First Degree 154 — Nexus-Login noetig) dort hineinlegen, dann erneut klicken.");
+                Form.Log("Archive der Extra-Mods (LC Customs, First Degree 154 — Nexus-Login noetig) dort hineinlegen, dann erneut klicken.");
                 return;
             }
-            string[] zips = Directory.GetFiles(dir, "*.zip");
-            if (zips.Length == 0) { Form.Log("Keine .zip im packages/-Ordner gefunden."); return; }
+            List<string> archives = new List<string>();
+            foreach (string f in Directory.GetFiles(dir))
+            {
+                string ext = Path.GetExtension(f).ToLowerInvariant();
+                if (ext == ".zip" || ext == ".7z" || ext == ".rar") archives.Add(f);
+            }
+            if (archives.Count == 0) { Form.Log("Keine .zip/.7z/.rar im packages/-Ordner gefunden."); return; }
             string gameLow = game.ToLowerInvariant().TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             string backupRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packages_backup");
-            foreach (string zip in zips)
+            foreach (string archive in archives)
             {
-                string name = Path.GetFileNameWithoutExtension(zip);
+                string name = Path.GetFileNameWithoutExtension(archive);
                 string done = Path.Combine(dir, name + ".installed");
                 if (File.Exists(done)) { Form.Log("Bereits installiert, uebersprungen: " + name); continue; }
-                Form.Log("Installiere Extra-Paket: " + name);
+                Form.Log("Installiere Extra-Paket: " + Path.GetFileName(archive));
+                string extract = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pkg_extract", name);
                 try
                 {
-                    int files = 0, backed = 0;
-                    using (ZipArchive za = ZipFile.OpenRead(zip))
+                    if (Directory.Exists(extract)) { try { Directory.Delete(extract, true); } catch { } }
+                    Directory.CreateDirectory(extract);
+                    string ext2 = Path.GetExtension(archive).ToLowerInvariant();
+                    if (ext2 == ".zip") ZipFile.ExtractToDirectory(archive, extract);
+                    else if (!ExtractArchive(archive, extract))
                     {
-                        foreach (ZipArchiveEntry e in za.Entries)
+                        Form.Log("  Archiv konnte nicht entpackt werden — bitte als .zip ablegen oder 7-Zip installieren.");
+                        continue;
+                    }
+                    int files = 0, backed = 0;
+                    foreach (string file in Directory.GetFiles(extract, "*", SearchOption.AllDirectories))
+                    {
+                        string rel = file.Substring(extract.Length).TrimStart(Path.DirectorySeparatorChar);
+                        string target = Path.Combine(game, rel);
+                        if (!target.ToLowerInvariant().StartsWith(gameLow))
+                        { Form.Log("  uebersprungen (ausserhalb des Spiels): " + rel); continue; }
+                        string tdir = Path.GetDirectoryName(target);
+                        if (!Directory.Exists(tdir)) Directory.CreateDirectory(tdir);
+                        if (File.Exists(target) && IsProtectedIni(tdir, Path.GetFileName(target)))
+                        { Form.Log("  uebersprungen (geschuetzt): " + rel); continue; }
+                        if (File.Exists(target))
                         {
-                            if (string.IsNullOrEmpty(e.Name)) continue;   // Ordner-Eintrag
-                            string rel = e.FullName.Replace('/', Path.DirectorySeparatorChar);
-                            if (rel.IndexOf("..", StringComparison.Ordinal) >= 0 || Path.IsPathRooted(rel))
-                            { Form.Log("  uebersprungen (unsicherer Pfad): " + rel); continue; }
-                            string target = Path.Combine(game, rel);
-                            if (!target.ToLowerInvariant().StartsWith(gameLow))
-                            { Form.Log("  uebersprungen (ausserhalb des Spiels): " + rel); continue; }
-                            string tdir = Path.GetDirectoryName(target);
-                            if (!Directory.Exists(tdir)) Directory.CreateDirectory(tdir);
-                            if (File.Exists(target) && IsProtectedIni(tdir, Path.GetFileName(target)))
-                            { Form.Log("  uebersprungen (geschuetzt): " + rel); continue; }
-                            if (File.Exists(target))
-                            {
-                                string bfile = Path.Combine(backupRoot, name, rel);
-                                string bdir = Path.GetDirectoryName(bfile);
-                                if (!Directory.Exists(bdir)) Directory.CreateDirectory(bdir);
-                                if (!File.Exists(bfile)) File.Copy(target, bfile, false);
-                                backed++;
-                            }
-                            e.ExtractToFile(target, true);
-                            files++;
+                            string bfile = Path.Combine(backupRoot, name, rel);
+                            string bdir = Path.GetDirectoryName(bfile);
+                            if (!Directory.Exists(bdir)) Directory.CreateDirectory(bdir);
+                            if (!File.Exists(bfile)) File.Copy(target, bfile, false);
+                            backed++;
                         }
+                        File.Copy(file, target, true);
+                        files++;
                     }
                     File.WriteAllText(done, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + Environment.NewLine);
                     Form.Log("  " + files + " Dateien installiert, " + backed + " Originaldateien nach packages_backup/" + name + "/ gesichert.");
+                    try { Directory.Delete(extract, true); } catch { }
                 }
                 catch (Exception ex) { Form.Log("  PAKET FEHLGESCHLAGEN: " + ex.Message); }
             }
+        }
+
+        /// <summary>Entpackt .7z/.rar per Windows-tar.exe (libarchive liest beide) oder,
+        /// falls tar fehlt, per installiertem 7-Zip. Rueckgabe = Erfolg.</summary>
+        private static bool ExtractArchive(string archive, string destDir)
+        {
+            string tool = Path.Combine(Environment.SystemDirectory, "tar.exe");
+            if (!File.Exists(tool))
+            {
+                string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                tool = Path.Combine(pf, "7-Zip", "7z.exe");
+            }
+            if (!File.Exists(tool))
+            {
+                Form.Log("  Weder C:\\Windows\\System32\\tar.exe noch 7-Zip gefunden.");
+                return false;
+            }
+            string toolArgs = tool.EndsWith("7z.exe", StringComparison.OrdinalIgnoreCase)
+                ? "x \"" + archive + "\" -o\"" + destDir + "\" -y"
+                : "-xf \"" + archive + "\" -C \"" + destDir + "\"";
+            StringBuilder bat = new StringBuilder();
+            bat.Append("@echo off\r\n");
+            bat.Append("if not exist \"" + destDir + "\" mkdir \"" + destDir + "\"\r\n");
+            bat.Append("\"" + tool + "\" " + toolArgs + "\r\n");
+            bat.Append("exit /b %ERRORLEVEL%\r\n");
+            WriteCmd("pkg_extract.cmd", bat.ToString());
+            return RunCmdBatch("/c pkg_extract.cmd") == 0;
         }
 
         internal static void DoInstall(string game)
@@ -669,7 +697,7 @@ namespace IScrapLauncher
             packages.Click += delegate { Background(delegate { Program.InstallPackages(Program.Cfg.GamePath); }); };
             Label hint = new Label
             {
-                Text = "Extra-Mods (Lizenz! nicht im Repo): Nexus-Zips in den packages-Ordner\r\nneben dem Launcher legen, dann diesen Button druecken.",
+                Text = "Extra-Mods (Lizenz! nicht im Repo): Nexus-Archive\r\n(zip/7z/rar) in den packages-Ordner neben dem\r\nLauncher legen, dann diesen Button druecken.",
                 Left = 516, Top = 88, Width = 240, Height = 40,
                 Font = new System.Drawing.Font("Segoe UI", 7.5f), ForeColor = System.Drawing.Color.DimGray
             };
