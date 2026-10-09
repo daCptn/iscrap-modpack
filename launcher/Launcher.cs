@@ -414,16 +414,37 @@ namespace IScrapLauncher
             catch { return false; }
         }
 
+        /// <summary>Loescht das Zone.Identifier-Flag (Mark of the Web) einer Datei.
+        /// Heruntergeladene EXEs mit MOTW koennen von Windows an Start-Versuchen
+        /// gehindert werden (Win32 5); das Flag zu entfernen ist der saubere Weg.</summary>
+        internal static void UnblockMotw(string file)
+        {
+            try { File.Delete(file + ":Zone.Identifier"); } catch { }
+        }
+
         internal static void ToggleTweak()
         {
+            bool wasActive = TweakActive();
+            Form.Log((wasActive ? "Entferne" : "Setze") + " Ruckler-Fix (CPU/E/A/Speicher-Prioritaet fuer GTAIV.exe) ...");
+
+            // 1) Direkt schreiben — klappt, wenn der Launcher mit vollem Token laeuft
+            //    (UAC deaktiviert oder bereits als Administrator gestartet).
+            if (TweakWriteDirect(wasActive))
+            {
+                Form.Log("Ruckler-Fix ist jetzt " + (TweakActive()
+                    ? "AN — wirkt ab dem naechsten Spielstart, rueckgaengig ueber denselben Button."
+                    : "aus (Vanilla-Prioritaet)."));
+                return;
+            }
+
+            // 2) Helper mit requireAdministrator-Manifest (normale UAC-Systeme).
             string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RucklerFix.exe");
             if (!File.Exists(helper))
             {
                 Form.Log("RucklerFix.exe fehlt neben dem Launcher — bitte beide EXEs aus dem Repo (launcher/) verwenden.");
                 return;
             }
-            bool wasActive = TweakActive();
-            Form.Log((wasActive ? "Entferne" : "Setze") + " Ruckler-Fix (CPU/E/A/Speicher-Prioritaet fuer GTAIV.exe) ... [UAC-Prompt]");
+            UnblockMotw(helper);
             try
             {
                 ShellExecuteInfo info = new ShellExecuteInfo();
@@ -431,14 +452,14 @@ namespace IScrapLauncher
                 info.fMask = SeeMaskNocloseprocess;
                 info.lpVerb = "open";   // Elevation kommt aus dem Helper-Manifest
                 info.lpFile = helper;
-                info.lpParameters = wasActive ? "remove" : "apply";
+                if (wasActive) info.lpParameters = "remove"; else info.lpParameters = "apply";
                 info.nShow = 1;
                 if (!ShellExecuteEx(ref info))
                 {
                     int err = Marshal.GetLastWin32Error();
                     Form.Log(err == 1223
                         ? "UAC-Prompt abgebrochen — nichts geaendert."
-                        : "Ruckler-Fix fehlgeschlagen (Win32 " + err + ").");
+                        : "Start verweigert (Win32 " + err + "). Bitte die Launcher.exe per Rechtsklick > Eigenschaften > 'Zulassen' entblocken oder den Launcher einmal als Administrator starten.");
                     return;
                 }
                 if (info.hProcess != IntPtr.Zero)
@@ -450,6 +471,47 @@ namespace IScrapLauncher
                     : "aus (Vanilla-Prioritaet)."));
             }
             catch (Exception ex) { Form.Log("Ruckler-Fix fehlgeschlagen: " + ex.Message); }
+        }
+
+        /// <summary>Schreibt/entfernt die IFEO-Werte direkt. Gibt false zurueck, wenn
+        /// das Token nicht fuer HKLM reicht (dann Helper bzw. Admin-Start noetig).</summary>
+        private static bool TweakWriteDirect(bool remove)
+        {
+            try
+            {
+                string[] keys = {
+                    @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\GTAIV.exe",
+                    @"SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\GTAIV.exe"
+                };
+                foreach (string key in keys)
+                {
+                    using (RegistryKey k = Registry.LocalMachine.OpenSubKey(key, true))
+                    {
+                        if (k == null)
+                        {
+                            if (remove) continue;
+                            return false;
+                        }
+                        if (remove)
+                        {
+                            foreach (string v in new string[] { "CpuPriorityClass", "IoPriority", "PagePriority" })
+                            {
+                                try { k.DeleteValue(v, false); } catch { }
+                            }
+                        }
+                        else
+                        {
+                            k.SetValue("CpuPriorityClass", 3, RegistryValueKind.DWord);
+                            k.SetValue("IoPriority", 3, RegistryValueKind.DWord);
+                            k.SetValue("PagePriority", 5, RegistryValueKind.DWord);
+                        }
+                    }
+                }
+                return true;
+            }
+            catch (UnauthorizedAccessException) { return false; }
+            catch (System.Security.SecurityException) { return false; }
+            catch { return false; }
         }
 
         // ------------------------------------------------------------ Extra-Pakete (packages/)
@@ -528,7 +590,9 @@ namespace IScrapLauncher
         }
 
         /// <summary>Entpackt .7z/.rar per Windows-tar.exe (libarchive liest beide) oder,
-        /// falls tar fehlt, per installiertem 7-Zip. Rueckgabe = Erfolg.</summary>
+        /// falls tar fehlt, per installiertem 7-Zip — direkt per ShellExecuteEx ohne
+        /// cmd.exe-Umweg (cmd-Starts werden auf manchen Systemen von Schutzmechanismen
+        /// mit Win32 5 verweigert). Rueckgabe = Erfolg.</summary>
         private static bool ExtractArchive(string archive, string destDir)
         {
             string tool = Path.Combine(Environment.SystemDirectory, "tar.exe");
@@ -539,19 +603,31 @@ namespace IScrapLauncher
             }
             if (!File.Exists(tool))
             {
-                Form.Log("  Weder C:\\Windows\\System32\\tar.exe noch 7-Zip gefunden.");
+                Form.Log("  Weder C:\\Windows\\System32\\tar.exe noch 7-Zip gefunden — bitte 7-Zip installieren oder als .zip ablegen.");
                 return false;
             }
-            string toolArgs = tool.EndsWith("7z.exe", StringComparison.OrdinalIgnoreCase)
-                ? "x \"" + archive + "\" -o\"" + destDir + "\" -y"
-                : "-xf \"" + archive + "\" -C \"" + destDir + "\"";
-            StringBuilder bat = new StringBuilder();
-            bat.Append("@echo off\r\n");
-            bat.Append("if not exist \"" + destDir + "\" mkdir \"" + destDir + "\"\r\n");
-            bat.Append("\"" + tool + "\" " + toolArgs + "\r\n");
-            bat.Append("exit /b %ERRORLEVEL%\r\n");
-            WriteCmd("pkg_extract.cmd", bat.ToString());
-            return RunCmdBatch("/c pkg_extract.cmd") == 0;
+            UnblockMotw(tool);
+            ShellExecuteInfo info = new ShellExecuteInfo();
+            info.cbSize = Marshal.SizeOf(typeof(ShellExecuteInfo));
+            info.fMask = SeeMaskNocloseprocess;
+            info.lpVerb = "open";
+            info.lpFile = tool;
+            if (tool.EndsWith("7z.exe", StringComparison.OrdinalIgnoreCase))
+                info.lpParameters = "x \"" + archive + "\" -o\"" + destDir + "\" -y";
+            else
+                info.lpParameters = "-xf \"" + archive + "\" -C \"" + destDir + "\"";
+            info.nShow = SwHide;
+            try
+            {
+                if (!ShellExecuteEx(ref info))
+                {
+                    Form.Log("  Archiv-Werkzeug startet nicht (Win32 " + Marshal.GetLastWin32Error() + ") — bitte als .zip ablegen.");
+                    return false;
+                }
+                if (info.hProcess != IntPtr.Zero) WaitForHandle(info.hProcess, 600000);
+                return true;
+            }
+            catch (Exception ex) { Form.Log("  Archiv-Entpacken fehlgeschlagen: " + ex.Message); return false; }
         }
 
         internal static void DoInstall(string game)
@@ -711,6 +787,11 @@ namespace IScrapLauncher
             Controls.Add(tweak); Controls.Add(packages); Controls.Add(hint);
             Controls.Add(log);
             UpdatePath();
+
+            // Eigene Download-Flags entfernen: MOTW-EXEs koennen von Windows an
+            // Prozess-Starts gehindert werden (Win32 5) — einmalig entsperren.
+            Program.UnblockMotw(Application.ExecutablePath);
+            Program.UnblockMotw(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RucklerFix.exe"));
 
             if (!Program.LooksLikeGame(Program.Cfg.GamePath))
             {
