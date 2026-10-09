@@ -19,6 +19,21 @@ Voraussetzung: installiertes GTA IV CE (Steam) + [Git](https://git-scm.com) fuer
 - iScrap/PhonePlus (Eigenentwicklung) + gepatchte Versionen der genutzten Mods
   (Business Complete, Jewellery & Pawn, Hideout Cash Storage, Liberty City Dealership)
 - Liberty Loadout, FusionFix, Project2DFX-LOD-Lights, ScriptHookDotNet (CE)
+- `common/data/handling.dat` — Anti-Schwamm-Fahrphysik (bei Deinstallation automatisch
+  auf das mitgelieferte `handling.dat.bak` zurueckgesetzt)
+
+## Extra-Mods ueber den Launcher (packages/)
+
+Mods, deren Lizenz Re-Uploads verbietet (Liberty City Customs, First Degree 154 Vehicle
+Addon Pack), liegen NICHT in diesem Repo. Stattdessen:
+
+1. Zips einmalig von Nexus Mods herunterladen (Login noetig).
+2. Zips in den Ordner `packages/` neben der `Launcher.exe` legen.
+3. Launcher: **Extra-Pakete installieren** — entpackt spielrelativ und sichert
+   ueberschriebene Originaldateien nach `packages_backup/<Paketname>/`.
+4. **Ruckler-Fix (Registry)** = Streaming-/Stutter-Tweak: CPU-/E/A-/Speicher-Prioritaet
+   fuer GTAIV.exe (entspricht dem Nexus-1513-Tweak; per Button an/aus, einmal UAC,
+   wirkt ab dem naechsten Spielstart).
 
 ## Fuer Maintainer
 

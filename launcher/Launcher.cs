@@ -326,6 +326,14 @@ namespace IScrapLauncher
         // ------------------------------------------------------------ Deinstallation
         internal static void DoUninstall(string game)
         {
+            // Ueberschriebene Original-Spieldateien zuerst restaurieren (Pack liefert .bak mit).
+            // handling.dat loeschen statt restaurieren wuerde das Spiel brechen.
+            string handling = Path.Combine(game, "common", "data", "handling.dat");
+            if (File.Exists(handling + ".bak") && File.Exists(handling))
+            {
+                try { File.Copy(handling + ".bak", handling, true); Form.Log("  restauriert (Original): common/data/handling.dat"); }
+                catch (Exception ex) { Form.Log("  handling.dat-Restore fehlgeschlagen: " + ex.Message); }
+            }
             string list = Path.Combine(RepoDir(), "uninstall.txt");
             string keep = Path.Combine(RepoDir(), "keep.txt");
             List<string> keepers = File.Exists(keep)
@@ -387,6 +395,137 @@ namespace IScrapLauncher
             }
         }
 
+        // ------------------------------------------------------------ Ruckler-Fix (Registry)
+        // Nexus 1513 ("High Priority Registry Tweak") als Standard-IFEO-Werte selbst
+        // gesetzt: CPU-Prioritaet Hoch (3), E/A-Prioritaet Hoch (3), Speicherseiten-
+        // Prioritaet Sehr Hoch (5) fuer GTAIV.exe. Beide Registry-Views (WOW64 + nativ).
+        // Die Kommandozeilen sind durchgehend Literale — keine Variablen, kein Injection-
+        // Risiko. UAC-Abfrage erscheint einmal pro Aktion (HKLM braucht Admin).
+        private const string TweakApplyCmd =
+            "/c reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /t REG_DWORD /d 3 /f && " +
+            "reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /t REG_DWORD /d 3 /f && " +
+            "reg add \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /t REG_DWORD /d 5 /f && " +
+            "reg add \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /t REG_DWORD /d 3 /f && " +
+            "reg add \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /t REG_DWORD /d 3 /f && " +
+            "reg add \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /t REG_DWORD /d 5 /f";
+
+        private const string TweakRemoveCmd =
+            "/c reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /f && " +
+            "reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /f && " +
+            "reg delete \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /f && " +
+            "reg delete \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v CpuPriorityClass /f && " +
+            "reg delete \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v IoPriority /f && " +
+            "reg delete \"HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\GTAIV.exe\" /v PagePriority /f";
+
+        internal static bool TweakActive()
+        {
+            try
+            {
+                using (RegistryKey k = Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\GTAIV.exe"))
+                {
+                    return k != null && k.GetValue("CpuPriorityClass") != null;
+                }
+            }
+            catch { return false; }
+        }
+
+        private static void RunElevated(string literalArgs)
+        {
+            ShellExecuteInfo info = new ShellExecuteInfo();
+            info.cbSize = Marshal.SizeOf(typeof(ShellExecuteInfo));
+            info.fMask = SeeMaskNocloseprocess;
+            info.lpVerb = "runas";          // UAC — reg auf HKLM braucht Admin
+            info.lpFile = "cmd.exe";
+            info.lpParameters = literalArgs;
+            info.nShow = SwHide;
+            if (!ShellExecuteEx(ref info))
+                throw new IOException("Start fehlgeschlagen (Win32 " + Marshal.GetLastWin32Error() + ")");
+            if (info.hProcess != IntPtr.Zero) CloseHandle(info.hProcess);
+        }
+
+        internal static void ToggleTweak()
+        {
+            try
+            {
+                if (TweakActive())
+                {
+                    Form.Log("Entferne Ruckler-Fix (Registry-Werte) ... [UAC-Prompt]");
+                    RunElevated(TweakRemoveCmd);
+                    Form.Log("Ruckler-Fix ist jetzt " + (TweakActive() ? "NOCH AKTIV (loeschen fehlgeschlagen?)" : "aus (Vanilla-Prioritaet)."));
+                }
+                else
+                {
+                    Form.Log("Setze Ruckler-Fix (CPU/E/A/Speicher-Prioritaet Hoch fuer GTAIV.exe) ... [UAC-Prompt]");
+                    RunElevated(TweakApplyCmd);
+                    Form.Log("Ruckler-Fix ist jetzt " + (TweakActive() ? "AN — wirkt ab naechstem Spielstart, rueckganguetschbar ueber denselben Button." : "NICHT AKTIV (reg fehlgeschlagen?)"));
+                }
+            }
+            catch (Exception ex) { Form.Log("Ruckler-Fix fehlgeschlagen: " + ex.Message); }
+        }
+
+        // ------------------------------------------------------------ Extra-Pakete (packages/)
+        // Mods, deren Lizenz Re-Uploads verbietet (LC Customs, First Degree 154), kommen
+        // NICHT ins Git-Repo: Der Nutzer laedt die Nexus-Zips einmalig in den packages/-
+        // Ordner neben dem Launcher, der Launcher entpackt sie spielrelativ und sichert
+        // ueberschriebene Originaldateien nach packages_backup/<Paketname>/.
+        internal static void InstallPackages(string game)
+        {
+            string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packages");
+            if (!Directory.Exists(dir))
+            {
+                try { Directory.CreateDirectory(dir); } catch { }
+                Form.Log("packages/-Ordner angelegt: " + dir);
+                Form.Log("Zips der Extra-Mods (LC Customs, First Degree 154 — Nexus-Login noetig) dort hineinlegen, dann erneut klicken.");
+                return;
+            }
+            string[] zips = Directory.GetFiles(dir, "*.zip");
+            if (zips.Length == 0) { Form.Log("Keine .zip im packages/-Ordner gefunden."); return; }
+            string gameLow = game.ToLowerInvariant().TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string backupRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packages_backup");
+            foreach (string zip in zips)
+            {
+                string name = Path.GetFileNameWithoutExtension(zip);
+                string done = Path.Combine(dir, name + ".installed");
+                if (File.Exists(done)) { Form.Log("Bereits installiert, uebersprungen: " + name); continue; }
+                Form.Log("Installiere Extra-Paket: " + name);
+                try
+                {
+                    int files = 0, backed = 0;
+                    using (ZipArchive za = ZipFile.OpenRead(zip))
+                    {
+                        foreach (ZipArchiveEntry e in za.Entries)
+                        {
+                            if (string.IsNullOrEmpty(e.Name)) continue;   // Ordner-Eintrag
+                            string rel = e.FullName.Replace('/', Path.DirectorySeparatorChar);
+                            if (rel.IndexOf("..", StringComparison.Ordinal) >= 0 || Path.IsPathRooted(rel))
+                            { Form.Log("  uebersprungen (unsicherer Pfad): " + rel); continue; }
+                            string target = Path.Combine(game, rel);
+                            if (!target.ToLowerInvariant().StartsWith(gameLow))
+                            { Form.Log("  uebersprungen (ausserhalb des Spiels): " + rel); continue; }
+                            string tdir = Path.GetDirectoryName(target);
+                            if (!Directory.Exists(tdir)) Directory.CreateDirectory(tdir);
+                            if (File.Exists(target) && IsProtectedIni(tdir, Path.GetFileName(target)))
+                            { Form.Log("  uebersprungen (geschuetzt): " + rel); continue; }
+                            if (File.Exists(target))
+                            {
+                                string bfile = Path.Combine(backupRoot, name, rel);
+                                string bdir = Path.GetDirectoryName(bfile);
+                                if (!Directory.Exists(bdir)) Directory.CreateDirectory(bdir);
+                                if (!File.Exists(bfile)) File.Copy(target, bfile, false);
+                                backed++;
+                            }
+                            e.ExtractToFile(target, true);
+                            files++;
+                        }
+                    }
+                    File.WriteAllText(done, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + Environment.NewLine);
+                    Form.Log("  " + files + " Dateien installiert, " + backed + " Originaldateien nach packages_backup/" + name + "/ gesichert.");
+                }
+                catch (Exception ex) { Form.Log("  PAKET FEHLGESCHLAGEN: " + ex.Message); }
+            }
+        }
+
         internal static void DoInstall(string game)
         {
             string src = Path.Combine(RepoDir(), "modpack");
@@ -396,6 +535,7 @@ namespace IScrapLauncher
             string ver = ReadVersion(Path.Combine(RepoDir(), "version.txt"));
             File.WriteAllText(Path.Combine(game, "scripts", "pack_version.txt"), ver + Environment.NewLine);
             Form.Log("Installation abgeschlossen. Version: " + ver);
+            Form.Log("Tipp: Ruckler-Fix (Registry) und Extra-Pakete sind eigene Buttons oben.");
         }
 
         private static void CopyTree(string src, string dst)
@@ -521,12 +661,26 @@ namespace IScrapLauncher
             Button launch = new Button { Text = "Spiel starten", Left = 516, Top = 44, Width = 234, Height = 40 };
             launch.Click += delegate { Program.LaunchGame(); };
 
-            log = new TextBox { Left = 12, Top = 96, Width = 738, Height = 360, Multiline = true,
+            Button tweak = new Button { Text = "Ruckler-Fix (Registry): ?", Left = 12, Top = 92, Width = 240, Height = 34 };
+            tweak.Text = "Ruckler-Fix (Registry): " + (Program.TweakActive() ? "AN" : "aus");
+            // Synchron im UI-Thread: reg.exe dauert Sekunden und der Button-Text wird danach sicher aktualisiert.
+            tweak.Click += delegate { Program.ToggleTweak(); tweak.Text = "Ruckler-Fix (Registry): " + (Program.TweakActive() ? "AN" : "aus"); };
+            Button packages = new Button { Text = "Extra-Pakete installieren (packages/)", Left = 264, Top = 92, Width = 240, Height = 34 };
+            packages.Click += delegate { Background(delegate { Program.InstallPackages(Program.Cfg.GamePath); }); };
+            Label hint = new Label
+            {
+                Text = "Extra-Mods (Lizenz! nicht im Repo): Nexus-Zips in den packages-Ordner\r\nneben dem Launcher legen, dann diesen Button druecken.",
+                Left = 516, Top = 88, Width = 240, Height = 40,
+                Font = new System.Drawing.Font("Segoe UI", 7.5f), ForeColor = System.Drawing.Color.DimGray
+            };
+
+            log = new TextBox { Left = 12, Top = 134, Width = 738, Height = 322, Multiline = true,
                 ScrollBars = ScrollBars.Vertical, ReadOnly = true, BackColor = System.Drawing.Color.FromArgb(12, 16, 14),
                 ForeColor = System.Drawing.Color.FromArgb(140, 220, 160), Font = new System.Drawing.Font("Consolas", 9f) };
 
             Controls.Add(pathLabel); Controls.Add(changePath);
             Controls.Add(update); Controls.Add(install); Controls.Add(launch);
+            Controls.Add(tweak); Controls.Add(packages); Controls.Add(hint);
             Controls.Add(log);
             UpdatePath();
 
